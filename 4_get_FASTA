@@ -1,12 +1,28 @@
-# make the regions file first (copied from get_flank.sh)
+# prepare VCF of selected candidate SNPs 
 
 # get the list of snps that are in both the 48 individuals and 22 no-fam groups after random LD pruning
 awk 'BEGIN{FS=OFS="\t"};NR==FNR{a[$0];next} $1 in a {print $0}' afterQC.prune.in ../../all_samples/LD_30/afterQC.prune.in > cons_SNP.list
 
-
 ## given a list of snps, extract from the annotated vcf file, 
 # you can skip this step if you have a .bim file (formatting of columns might be a bit different, but we can shift them around with awk)
 bcftools view --include ID==@snp_id.list annotated_filtered.vcf.gz -Oz -o catalog_family.vcf.gz
+
+
+
+
+# ---------------- this chunk is for the SNPs with 75% coverage. Same procedure, but change files names as necessary --------------
+
+
+## given a list of snps, extract from the annotated vcf file, and make a new vcf file 
+bcftools view --include ID==@MAF20_MM50.prune.in noFam_noIND_MAF20_MM50.vcf.gz -Oz -o noFam_MAF20_MM50_pruned.vcf.gz
+
+# prepare VCF with just the SNPs with 75% sample coverage from the 22 indv
+vcftools --gzvcf noFam_MAF20_MM50_pruned.vcf.gz --max-missing 0.75 --recode --recode-INFO-all --stdout | bgzip -c > noFam_noIND_MAF20_MM75_pruned.vcf.gz
+
+
+# ---------------------------------------------------------------------------------------------------------------------------------
+
+
 
 # extract regions and SNP id
 zcat snps.vcf.gz | grep -v "^#" | cut -f1-3 > snps.pos
@@ -25,6 +41,7 @@ cat snp_flank_reg.bed
 
 
 # change formatting to run for the script below
+# pos can only start from min 1.
 sed 's/\t/:/' snp_flank_reg.bed | sed 's/\t/-/' >> tmp && mv tmp snp_flank_reg.bed
 # positions list looks like:
 # scaffold_2:14982722-14984722	scaffold_2_14983722_T_C
@@ -61,15 +78,14 @@ do
 	for j in $(cat popmap2.txt)
 	do
 		sample_name=$(echo $j)
-		# should just use the alternative allele or iupac codes better? --> ask Jose/Aaron? Jose seems to think Alt is good
+		# the --haplotype A option is for alternative allele. Better to use I for IUPAC so that you can see which samples are heterozygous
+		# if you want to get just read sites, use -a N -M N to assign absent and missing sites as N 
 		samtools faidx $reference $region | bcftools consensus --haplotype A -s $sample_name $vcf_file >> $outputdir/$snp_name.fa
 	done
 done < $regions_file
 
 
 #---------------------------
-
-
 
 #!/bin/bash
 #SBATCH --job-name=ren_addRef_idx
@@ -107,3 +123,42 @@ for i in $(ls *.fa)
 do
 samtools faidx $i # index fasta files
 done
+
+
+
+## ----------------------------- CALC ALT AF and COVERAGE for a given SNP ----------------------------------
+
+## calc.sh script to check Alternative Allele frequency (since biallelelic, MAF = min(Ref,Alt)) and coverage in both allSamples and noFam pools.
+## use this in a directory containing your noFam and allSamples raw vcf files.
+# run with = 
+# bash calc.sh $scaffold_no $SNP_pos
+### check stats
+
+#!/bin/bash
+set -e
+set -u
+set -o pipefail
+
+no=$1
+snp_pos=$2
+snp_start=$(expr $snp_pos - 1)
+all_vcf=./all_mpileup.vcf.gz  #direct to VCF containing all sample data
+noFam_vcf=./noFam_mpileup.vcf.gz  #direct to VCF containing trimmed data
+
+# view snps
+ID=$(bcftools query --regions scaffold_$no:$snp_start-$snp_pos -f '%CHROM %POS %REF %ALT\n' mpileup.vcf.gz)
+echo "SNP id: $ID"
+
+# calc allele freq
+AF_all=$(bcftools query --regions scaffold_$no:$snp_start-$snp_pos -f '%CHROM %POS %AN %AC{0}\n' $all_vcf | awk '{printf "%s %s %f\n",$1,$2,$4/$3}')
+echo "Alternate allele freq for all samples $MAF_all"
+
+AF_no=$(bcftools query --regions scaffold_$no:$snp_start-$snp_pos -f '%CHROM %POS %AN %AC{0}\n' $noFam_vcf | awk '{printf "%s %s %f\n",$1,$2,$4/$3}')
+echo "Alternate allele freq for no fam samples $MAF_no"
+
+# calc missing data
+all_MM=$(bcftools query --regions scaffold_$no:$snp_start-$snp_pos -f '[\t%GT]\n' $all_vcf | awk '{OFS=RS;$1=$1}1' | grep -v "\." | wc -l)
+echo "present in $all_MM out of 48"
+
+fam_MM=$(bcftools query --regions scaffold_$no:$snp_start-$snp_pos -f '[\t%GT]\n' $noFam_vcf | awk '{OFS=RS;$1=$1}1' | grep -v "\." | wc -l)
+echo "present in $fam_MM out of 22"
