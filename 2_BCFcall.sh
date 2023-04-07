@@ -36,13 +36,5 @@ bcftools mpileup --threads 32 -Q 20 -q 20 -Ou \
 bcftools call --threads 32 -m -v -Oz -o $outputdir/mpileup/mpileup.vcf.gz
 
 
-
-# call consensus alleles for each chloroplast genome
-for i in $(ls *.bam | sed 's/.bam//')
-do
-bcftools mpileup --threads 32 -Q 20 -q 20 -Ou -R $regionsdir/list_chlor_sc.txt -f $reference $i.bam | \
-bcftools call --threads 32 --ploidy 1 -c -Oz -o $outputdir/chlor_vcf/$i.vcf.gz
-done
-
-## script (for nuclear genome, chloroplast is only run once) is run again using modified popmap2.txt samples list, 
+## script is run again using modified popmap2.txt samples list, 
 # consisting only of individuals from different maternal plants
