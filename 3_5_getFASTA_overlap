@@ -1,0 +1,109 @@
+# make the regions file first (copied from get_flank.sh)
+
+# get the list of snps that are in both the 48 individuals and 22 no-fam groups after random LD pruning
+awk 'BEGIN{FS=OFS="\t"};NR==FNR{a[$0];next} $1 in a {print $0}' afterQC.prune.in ../../all_samples/LD_30/afterQC.prune.in > cons_SNP.list
+
+
+## given a list of snps, extract from the annotated vcf file, 
+# you can skip this step if you have a .bim file (formatting of columns might be a bit different, but we can shift them around with awk)
+bcftools view --include ID==@snp_id.list annotated_filtered.vcf.gz -Oz -o catalog_family.vcf.gz
+
+# extract regions and SNP id
+zcat snps.vcf.gz | grep -v "^#" | cut -f1-3 > snps.pos
+# format is CHR, POS, ID
+
+# calculate flanking region (sub 1000 with flanking region size in bp)
+awk 'BEGIN{FS=OFS="\t"}; {start = $2 - 1000; end = $2 + 1000; print $1,start,end,$3}' snps.pos > snp_flank_reg.bed
+
+cat snp_flank_reg.bed
+# bedfile looks like:
+# scaffold_2	14982722	14984722	scaffold_2_14983722_T_C
+# scaffold_4	4457011	4459011	scaffold_4_4458011_A_T
+# scaffold_6	12174445	12176445	scaffold_6_12175445_C_T
+# scaffold_10	106835	108835	scaffold_10_107835_A_T
+# scaffold_11	133237	135237	scaffold_11_134237_C_T
+
+
+# change formatting to run for the script below
+sed 's/\t/:/' snp_flank_reg.bed | sed 's/\t/-/' >> tmp && mv tmp snp_flank_reg.bed
+# positions list looks like:
+# scaffold_2:14982722-14984722	scaffold_2_14983722_T_C
+# scaffold_4:4457011-4459011	scaffold_4_4458011_A_T
+# scaffold_6:12174445-12176445	scaffold_6_12175445_C_T
+# scaffold_10:106835-108835	scaffold_10_107835_A_T
+# scaffold_11:133237-135237	scaffold_11_134237_C_T
+
+
+# get fasta file from bed files
+#!/bin/bash
+#SBATCH --job-name=make_fasta
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=michelleliutbcs@gmail.com
+#SBATCH -A rrg-shaferab
+#SBATCH --cpus-per-task 32
+#SBATCH --mem-per-cpu=3G
+#SBATCH -t 0-2:59:00
+#SBATCH -o %x-%j.log
+
+module load samtools/1.15.1
+module load bcftools
+
+outputdir=/home/miliu/projects/def-shaferab/miliu/arabidopsis/cleandata/aligned/assembled/fasta/ADD_MISS75_MAF20
+regions_file=/home/miliu/projects/def-shaferab/miliu/arabidopsis/cleandata/aligned/SNP/snp_ADDMAF20_MM75.bed 
+reference=/home/miliu/projects/def-shaferab/miliu/arabidopsis/reference_genomes/index/Lyrata_reference.fa
+vcf_file=/home/miliu/projects/def-shaferab/miliu/arabidopsis/cleandata/aligned/per_fam/mpileup.norm.named.vcf.gz
+# i might need to change the rest to follow the all-sample mpileup data
+
+while read -r line;
+do
+	region=$(echo "$line" | cut -f1)
+	snp_name=$(echo "$line" | cut -f2)
+	for j in $(cat popmap2.txt)
+	do
+		sample_name=$(echo $j)
+		# should just use the alternative allele or iupac codes better? --> ask Jose/Aaron? Jose seems to think Alt is good
+		samtools faidx $reference $region | bcftools consensus --haplotype A -s $sample_name $vcf_file >> $outputdir/$snp_name.fa
+	done
+done < $regions_file
+
+
+#---------------------------
+
+
+
+#!/bin/bash
+#SBATCH --job-name=ren_addRef_idx
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=michelleliutbcs@gmail.com
+#SBATCH -A rrg-shaferab
+#SBATCH --cpus-per-task 32
+#SBATCH --mem-per-cpu=3G
+#SBATCH -t 0-2:59:00
+#SBATCH -o %x-%j.log
+
+module load samtools/1.15.1
+module load bcftools
+
+outputdir=/home/miliu/projects/def-shaferab/miliu/arabidopsis/cleandata/aligned/assembled/fasta/ADD_MISS30
+regions_file=/home/miliu/projects/def-shaferab/miliu/arabidopsis/cleandata/aligned/SNP/snp_flank_3030_ADD.bed
+reference=/home/miliu/projects/def-shaferab/miliu/arabidopsis/reference_genomes/index/Lyrata_reference.fa
+
+# first, rename each fasta header to sample name
+for i in $(ls *.fa)
+do
+awk 'NR==FNR{names[NR]=$0; next} /^>/{$1=">"names[++c]}1' ../popmap2.txt $i >> tmp && mv tmp $i # change name
+samtools faidx $i # index fasta files
+done
+
+# add the reference fasta
+while read -r line;
+do
+	region=$(echo "$line" | cut -f1)
+	snp_name=$(echo "$line" | cut -f2)
+	samtools faidx $reference $region >> $outputdir/$snp_name.fa
+done < $regions_file
+
+for i in $(ls *.fa)
+do
+samtools faidx $i # index fasta files
+done
