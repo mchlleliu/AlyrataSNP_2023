@@ -1,57 +1,39 @@
-# prepare VCF of selected candidate SNPs 
+## Make FASTA files of flanking regions 1000 bp up- and downstream of each candidate SNP site
 
-# get the list of snps that are in both the 48 individuals and 22 no-fam groups after random LD pruning
-awk 'BEGIN{FS=OFS="\t"};NR==FNR{a[$0];next} $1 in a {print $0}' afterQC.prune.in ../../all_samples/LD_30/afterQC.prune.in > cons_SNP.list
+# prepare VCF of selected candidate SNPs. Use positions file saved from R from excessHet filtering
+vcftools --gzvcf MAF20_noDupsnoFixed.vcf.gz --positions noMaxMAF/candidateList.txt --recode --recode-INFO-all --stdout | bgzip -c > candidateList.vcf.gz
+# set SNP id names
+bcftools annotate --set-id +'%CHROM\_%POS\_%REF\_%FIRST_ALT' candidateList.vcf.gz | bgzip > candidateList_NAMED.vcf.gz
+tabix candidateList_NAMED.vcf.gz
 
-## given a list of snps, extract from the annotated vcf file, 
-# you can skip this step if you have a .bim file (formatting of columns might be a bit different, but we can shift them around with awk)
-bcftools view --include ID==@snp_id.list annotated_filtered.vcf.gz -Oz -o catalog_family.vcf.gz
+# make positions and SNP id file
+bcftools view --regions-file noMaxMAF/candidateList.txt candidateList_NAMED.vcf.gz --no-header | cut -f1-3 > candidateList.pos
+head -n 5 candidateList.pos
+#scaffold_1	93783	scaffold_1_93783_G_T
+#scaffold_1	328079	scaffold_1_328079_C_T
+#scaffold_1	531905	scaffold_1_531905_G_A
+#scaffold_1	917625	scaffold_1_917625_T_A
+#scaffold_1	947896	scaffold_1_947896_A_T
 
+# make bed file of flanking regions around the candidate SNP
+awk 'BEGIN{FS=OFS="\t"}; {start = $2 - 1000; end = $2 + 1000; print $1,start,end,$3}' candidateList.pos > candidateList.bed
+head -n5 candidateList.bed
+#scaffold_1	92783	94783	scaffold_1_93783_G_T
+#scaffold_1	327079	329079	scaffold_1_328079_C_T
+#scaffold_1	530905	532905	scaffold_1_531905_G_A
+#scaffold_1	916625	918625	scaffold_1_917625_T_A
+#scaffold_1	946896	948896	scaffold_1_947896_A_T
 
-
-
-# ---------------- this chunk is for the SNPs with 75% coverage. Same procedure, but change files names as necessary --------------
-
-
-## given a list of snps, extract from the annotated vcf file, and make a new vcf file 
-bcftools view --include ID==@MAF20_MM50.prune.in noFam_noIND_MAF20_MM50.vcf.gz -Oz -o noFam_MAF20_MM50_pruned.vcf.gz
-
-# prepare VCF with just the SNPs with 75% sample coverage from the 22 indv
-vcftools --gzvcf noFam_MAF20_MM50_pruned.vcf.gz --max-missing 0.75 --recode --recode-INFO-all --stdout | bgzip -c > noFam_noIND_MAF20_MM75_pruned.vcf.gz
-
-
-# ---------------------------------------------------------------------------------------------------------------------------------
-
-
-
-# extract regions and SNP id
-zcat snps.vcf.gz | grep -v "^#" | cut -f1-3 > snps.pos
-# format is CHR, POS, ID
-
-# calculate flanking region (sub 1000 with flanking region size in bp)
-awk 'BEGIN{FS=OFS="\t"}; {start = $2 - 1000; end = $2 + 1000; print $1,start,end,$3}' snps.pos > snp_flank_reg.bed
-
-cat snp_flank_reg.bed
-# bedfile looks like:
-# scaffold_2	14982722	14984722	scaffold_2_14983722_T_C
-# scaffold_4	4457011	4459011	scaffold_4_4458011_A_T
-# scaffold_6	12174445	12176445	scaffold_6_12175445_C_T
-# scaffold_10	106835	108835	scaffold_10_107835_A_T
-# scaffold_11	133237	135237	scaffold_11_134237_C_T
+sed 's/\t/:/' candidateList.bed | sed 's/\t/-/' >> tmp && mv tmp candidateList.bed
+head -n5 candidateList.bed
+#scaffold_1:92783-94783	scaffold_1_93783_G_T
+#scaffold_1:327079-329079	scaffold_1_328079_C_T
+#scaffold_1:530905-532905	scaffold_1_531905_G_A
+#scaffold_1:916625-918625	scaffold_1_917625_T_A
+#scaffold_1:946896-948896	scaffold_1_947896_A_T
 
 
-# change formatting to run for the script below
-# pos can only start from min 1.
-sed 's/\t/:/' snp_flank_reg.bed | sed 's/\t/-/' >> tmp && mv tmp snp_flank_reg.bed
-# positions list looks like:
-# scaffold_2:14982722-14984722	scaffold_2_14983722_T_C
-# scaffold_4:4457011-4459011	scaffold_4_4458011_A_T
-# scaffold_6:12174445-12176445	scaffold_6_12175445_C_T
-# scaffold_10:106835-108835	scaffold_10_107835_A_T
-# scaffold_11:133237-135237	scaffold_11_134237_C_T
-
-
-# get fasta file from bed files
+# ----------------- script to get fasta file from bed files --------------------------
 #!/bin/bash
 #SBATCH --job-name=make_fasta
 #SBATCH --mail-type=ALL
@@ -65,28 +47,34 @@ sed 's/\t/:/' snp_flank_reg.bed | sed 's/\t/-/' >> tmp && mv tmp snp_flank_reg.b
 module load samtools/1.15.1
 module load bcftools
 
-outputdir=/home/miliu/projects/def-shaferab/miliu/arabidopsis/cleandata/aligned/assembled/fasta/ADD_MISS75_MAF20
-regions_file=/home/miliu/projects/def-shaferab/miliu/arabidopsis/cleandata/aligned/SNP/snp_ADDMAF20_MM75.bed 
+outputdir=/home/miliu/scratch/arabidopsisL/noDups/fasta/cov15
+regions_file=/home/miliu/scratch/arabidopsisL/noDups/candidateList.bed
 reference=/home/miliu/projects/def-shaferab/miliu/arabidopsis/reference_genomes/index/Lyrata_reference.fa
-vcf_file=/home/miliu/projects/def-shaferab/miliu/arabidopsis/cleandata/aligned/per_fam/mpileup.norm.named.vcf.gz
-# i might need to change the rest to follow the all-sample mpileup data
+vcf_file=/home/miliu/projects/def-shaferab/miliu/arabidopsis/cleandata/aligned/all_samples/mpileup_NAMED.vcf.gz
+popmap=/home/miliu/projects/def-shaferab/miliu/arabidopsis/cleandata/aligned/assembled/popmap.txt
 
+# generate flanking fasta files for each sample
+# use the reference genome fasta, but feed it with the alternative allele of the sample if a SNP is present
+# each fasta file would contain the flanking regions around the SNP of interest for each sample
 while read -r line;
 do
 	region=$(echo "$line" | cut -f1)
 	snp_name=$(echo "$line" | cut -f2)
-	for j in $(cat popmap2.txt)
+	for j in $(cat "$popmap")
 	do
 		sample_name=$(echo $j)
-		# the --haplotype A option is for alternative allele. Better to use I for IUPAC so that you can see which samples are heterozygous
-		# if you want to get just read sites, use -a N -M N to assign absent and missing sites as N 
-		samtools faidx $reference $region | bcftools consensus --haplotype A -s $sample_name $vcf_file >> $outputdir/$snp_name.fa
+		samtools faidx $reference $region | bcftools consensus --iupac-codes -M N -s $sample_name $vcf_file >> $outputdir/$snp_name.fa
 	done
 done < $regions_file
 
 
-#---------------------------
+##### end of script
 
+# submit job :)
+sbatch get_fasta.sh 
+
+
+# ----------------- script to adjust FASTA header names --------------------------
 #!/bin/bash
 #SBATCH --job-name=ren_addRef_idx
 #SBATCH --mail-type=ALL
@@ -100,23 +88,23 @@ done < $regions_file
 module load samtools/1.15.1
 module load bcftools
 
-outputdir=/home/miliu/projects/def-shaferab/miliu/arabidopsis/cleandata/aligned/assembled/fasta/ADD_MISS30
-regions_file=/home/miliu/projects/def-shaferab/miliu/arabidopsis/cleandata/aligned/SNP/snp_flank_3030_ADD.bed
+regions_file=/home/miliu/scratch/arabidopsisL/noDups/candidateList.bed
 reference=/home/miliu/projects/def-shaferab/miliu/arabidopsis/reference_genomes/index/Lyrata_reference.fa
+popmap=/home/miliu/projects/def-shaferab/miliu/arabidopsis/cleandata/aligned/assembled/popmap.txt
 
 # first, rename each fasta header to sample name
 for i in $(ls *.fa)
 do
-awk 'NR==FNR{names[NR]=$0; next} /^>/{$1=">"names[++c]}1' ../popmap2.txt $i >> tmp && mv tmp $i # change name
-samtools faidx $i # index fasta files
+awk 'NR==FNR{names[NR]=$0; next} /^>/{$1=">"names[++c]}1' $popmap $i >> tmp && mv tmp $i # change name
 done
+
 
 # add the reference fasta
 while read -r line;
 do
 	region=$(echo "$line" | cut -f1)
 	snp_name=$(echo "$line" | cut -f2)
-	samtools faidx $reference $region >> $outputdir/$snp_name.fa
+	samtools faidx $reference $region >> $snp_name.fa
 done < $regions_file
 
 for i in $(ls *.fa)
