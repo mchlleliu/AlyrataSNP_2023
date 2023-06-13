@@ -41,14 +41,7 @@ vcftools --gzvcf noFam_noIND_MAF20.vcf.gz --positions Candidate15_ALL.pos \
 # get list of SNPs. download this and reload to R
 bcftools view minDP2_cand15.vcf.gz --no-header | cut -f1-3 > minDP2.pos
 
-###### ----------------- LD PRUNING -----------------------
-
-## use plink to perform pairwise LD analysis
-## the initial pruning is done to reduce the number of SNPs to a number that can be analysed
-# perform LD r2 calculation for each pair of SNPs within a 200 kbp region, shifting the window 10 bp each time. 
-# Separate SNP IDs into prune.in (r2 < 0.1) and prune.out (r2 > 0.1) 
-plink --vcf noFam_noIND_MAF20_MM50.vcf.gz --make-founders --indep-pairwise 200 10 0.01 --out MAF20_MM50 --allow-extra-chr --const-fid
-
+### move positions file to R
 
 
 
