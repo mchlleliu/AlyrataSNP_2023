@@ -32,8 +32,14 @@ head -n5 candidates.frq
 # scaffold_1	102272	2	34	A	0.794118	T	0.205882
 
 
-#### move .hwe and .frq files to R for duplicates filtering
+#### move .hwe and .frq files to R for duplicates filtering (see 3.5_ExcessHet_Filtering.Rmd)
 
+## additional filtering for SNPs with only 15 samples genotyped
+## at least 11 samples need to be successfully genotyped with at least 2 read depth per sample
+vcftools --gzvcf noFam_noIND_MAF20.vcf.gz --positions Candidate15_ALL.pos \
+--minGQ 15 --minDP 2 --max-missing 0.50 --recode --recode-INFO-all --stdout | bgzip -c > minDP2_cand15.vcf.gz
+# get list of SNPs. download this and reload to R
+bcftools view minDP2_cand15.vcf.gz --no-header | cut -f1-3 > minDP2.pos
 
 ###### ----------------- LD PRUNING -----------------------
 
